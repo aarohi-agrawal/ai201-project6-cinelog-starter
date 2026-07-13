@@ -1,7 +1,18 @@
 # PR Response Doc — CineLog Watchlist Feature
 
 ## AI Usage
-<!-- Fill in at the end — how you used AI tools during this project -->
+
+I used AI (Claude) throughout this project in a few distinct ways:
+
+**Codebase orientation:** Before touching any review comments, I had the AI walk me through `models.py`, `services/collection_service.py`, and `tests/test_collection.py` to understand the existing naming conventions, deduplication pattern, and test fixture structure. This made the six review comments much easier to parse — e.g. understanding why the reviewer wanted `save_to_watchlist` renamed (`verb_to_noun` convention already established by `add_to_collection`).
+
+**Hygiene and verification:** I used AI to help verify things like confirming no remaining references to `save_to_watchlist` existed anywhere in source (`grep --include="*.py"`), and to help debug environment issues (a broken venv after re-forking, a Vim editor I didn't know how to exit, and eventually a serious rebase problem).
+
+**Catching a rebase issue:** After rebasing on `main`, my tests passed initially, but the AI pushed me to specifically verify that `WatchlistEntry` had actually survived the merge rather than assuming success from Git's "Successfully rebased" message. This caught a real bug — the `.gitignore` conflict resolution had silently dropped the entire `WatchlistEntry` class from `models.py`, which only surfaced as an `ImportError` when running the test suite. I would not have caught this without being prompted to verify rather than trust the rebase output.
+
+**Comments 2, 4, and 5 :** The AI would only ask me guiding questions (e.g. "would you personally want your watchlist public or private by default?") and helped me polish the wording of my own answers afterward, rather than generating the reasoning itself. My final positions and arguments for both comments are my own reasoning, not AI-generated.
+
+**Where I did accept AI-drafted content:** I did ask the AI to write `tests/test_watchlist.py` directly (Comment 3), since that wasn't flagged with the same restriction as Comment 2, and I asked it to compile/format the mechanical sections of this document (Comments 1, 2, 3, 6, and this section) based on facts I'd already reported to it.
 
 ## Comment 1 — Rename
 **What I did:** Renamed `save_to_watchlist()` to `add_to_watchlist()` in `services/watchlist_service.py` to match the project's `verb_to_noun` naming convention used elsewhere (e.g. `add_to_collection`). Updated the import and call site in `routes/watchlist/watchlist.py`, and updated the function's docstring to match the new name.
@@ -35,4 +46,47 @@
 **How I verified no conflict remains:** Ran `pytest tests/ -v` — all 5 tests pass. Confirmed no lingering conflict markers in source files with `grep -rn "<<<<<<<\|=======\|>>>>>>>" --include="*.py" --include="*.md" . --exclude-dir=.venv`.
 
 ## PR Description
-<!-- Written at the end — feature overview, design decisions, manual testing steps -->
+
+**What this PR does:**
+Adds a watchlist feature to CineLog, allowing users to save films they intend to watch (as distinct from the existing collection feature, which tracks films already watched). Includes a `WatchlistEntry` model, `add_to_watchlist()` / `get_watchlist()` service functions, and REST endpoints (`GET /watchlist/<user_id>`, `POST /watchlist/<user_id>/add`).
+
+**Changes made in response to review:**
+- Renamed `save_to_watchlist()` to `add_to_watchlist()` to match the project's `verb_to_noun` naming convention (Comment 1).
+- Added deduplication logic to `add_to_watchlist()`, raising `AlreadyInWatchlistError` if a film is already on the user's watchlist, following the same pattern as `add_to_collection()` (Comment 2).
+- Added `tests/test_watchlist.py` covering the nonexistent-film-id case (Comment 3).
+- Rebased `feature/watchlist` onto `main` to pick up the integer-to-UUID film ID refactor, and fixed a `WatchlistEntry` model regression that the rebase's `.gitignore` conflict resolution silently introduced (Comment 6).
+
+**Design decisions:**
+- **Default visibility:** Watchlists default to `public=False` (private). A watchlist reveals current, undecided viewing intent rather than settled history, which feels more personal than a collection — users should opt in to sharing rather than have it exposed by default. This trades off some of the app's built-in social/discovery value, which I think is an acceptable cost since the alternative risk (unwanted exposure) sits with the user rather than the product.
+- **Sort order:** Watchlists are sorted by `date_added` descending (most recent first), matching `get_collection()`'s existing behavior. This keeps the most recently added film visible at the top, and gives users one consistent sorting mental model across both features.
+
+**How to manually test:**
+```bash
+# Start the app
+python app.py
+
+# Add a film to a user's watchlist
+curl -X POST http://127.0.0.1:5000/watchlist/<user_id>/add \
+  -H "Content-Type: application/json" \
+  -d '{"film_id": "<existing-film-uuid>"}'
+
+# View the watchlist (should show newest addition first)
+curl http://127.0.0.1:5000/watchlist/<user_id>
+
+# Attempt to add the same film again — should return an error (AlreadyInWatchlistError)
+curl -X POST http://127.0.0.1:5000/watchlist/<user_id>/add \
+  -H "Content-Type: application/json" \
+  -d '{"film_id": "<same-film-uuid>"}'
+
+# Attempt to add a nonexistent film — should return FilmNotFoundError
+curl -X POST http://127.0.0.1:5000/watchlist/<user_id>/add \
+  -H "Content-Type: application/json" \
+  -d '{"film_id": "00000000-0000-0000-0000-000000000000"}'
+```
+
+Run the automated test suite as well:
+```bash
+pytest tests/ -v
+```
+
+<img width="740" height="201" alt="Screenshot 2026-07-13 at 22 44 39" src="https://github.com/user-attachments/assets/bbe9f5b0-d477-4854-8d1d-540660ad7e09" />
